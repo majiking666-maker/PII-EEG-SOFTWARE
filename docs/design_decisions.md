@@ -65,6 +65,29 @@ No cloud dependency for core functionality. All inference, calibration, and
 command execution must run on-device. Cloud (if ever used) is limited to
 optional non-core features like model updates or backup.
 
+## Fallback to SSVEP-only mode for weak-signal users (2026-08-18)
+
+Real experiments showed some subjects never produce a usable EEG command
+pair, even after testing every combination (flat ~55-60% across the board,
+no standout - see "Subject 2" findings in Drive history). Rather than
+silently give such a user an unreliable EEG-command experience, onboarding
+now measures the user's best achievable pair and compares it against a
+minimum usability threshold (currently 60%, see `core/user_profile.py`).
+Users below threshold are placed in SSVEP_FALLBACK mode: discrete actions
+(e.g. YES/NO) are triggered via SSVEP selection instead of an EEG command.
+This is a deliberate, visible product decision, not a hidden limitation -
+the user should be told which mode they're in and why.
+
+## Mental action vs semantic meaning are decoupled (2026-08-18)
+
+A user's best-performing calibrated pair (e.g. "UP vs LEFT") does not
+determine what the interface *shows* them. The EEG classifier only detects
+"mental action A" vs "mental action B" - which two actions produce the
+clearest signal varies per person. The interface can still present this to
+the user as YES/NO (or any other binary function) regardless of which
+underlying mental actions happen to work best for them. This mapping is a
+software/UX layer decision, separate from the underlying classifier.
+
 ## Why a simulator instead of building against real hardware from day one
 
 No EEG/SSVEP hardware exists yet (hardware acquisition is funding-dependent,
