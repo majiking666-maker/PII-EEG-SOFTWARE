@@ -88,6 +88,26 @@ the user as YES/NO (or any other binary function) regardless of which
 underlying mental actions happen to work best for them. This mapping is a
 software/UX layer decision, separate from the underlying classifier.
 
+## SSVEP Target Registry: reserved vs dynamic frequencies (2026-08-19)
+
+Per Grok's priority list (Note 10/11), the SSVEP frequency pool is now
+managed centrally by `TargetRegistry` rather than each feature picking its
+own frequencies. CONFIRM (yes_target/no_target) and SCROLL
+(up/down, optionally fast/slow tiers) get permanently reserved frequencies
+that never change during a session; everything else (UI grid, keyboard
+letter groups, prediction bar entries) draws only from the remaining
+"dynamic" pool. This guarantees confirm and scroll markers - which can be
+on-screen simultaneously with other content - never collide with whatever
+dynamic targets happen to be showing.
+
+The default frequency pool was expanded from 6 to 10 entries to make room
+for these reservations while still leaving a usable dynamic pool
+(currently 4 with the default tiered scroll config). If pool size ever
+becomes a real hardware constraint, TargetRegistry safely falls back to
+single-tier scroll (no fast tier) rather than starving the dynamic pool,
+and raises a clear error rather than silently misbehaving if the pool is
+too small to support confirm + scroll + at least 2 dynamic targets.
+
 ## Why a simulator instead of building against real hardware from day one
 
 No EEG/SSVEP hardware exists yet (hardware acquisition is funding-dependent,

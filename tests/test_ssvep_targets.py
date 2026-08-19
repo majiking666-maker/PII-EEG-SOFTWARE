@@ -68,9 +68,11 @@ def test_too_many_elements_split_into_regions():
 
 
 def test_assign_frequencies_raises_when_pool_too_small():
-    elements = make_elements(10)
+    # Always request one more element than the pool has, rather than a
+    # hardcoded number - keeps this test correct even if the pool size changes.
+    elements = make_elements(len(DEFAULT_FREQUENCY_POOL) + 1)
     try:
-        assign_frequencies(elements, frequency_pool=DEFAULT_FREQUENCY_POOL)  # pool has 6
+        assign_frequencies(elements, frequency_pool=DEFAULT_FREQUENCY_POOL)
         assert False, "Should have raised ValueError for too many elements"
     except ValueError as e:
         print(f"PASS: correctly raised error for oversized element list: {e}")

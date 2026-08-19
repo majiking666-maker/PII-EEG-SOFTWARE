@@ -19,6 +19,7 @@ which this module's output feeds into.
 """
 
 from dataclasses import dataclass, field
+from enum import Enum
 
 
 # Realistic ceiling on simultaneous distinguishable frequencies.
@@ -28,7 +29,14 @@ MAX_SIMULTANEOUS_TARGETS = 6
 # A safe, commonly-used SSVEP frequency band (Hz). Real hardware/display
 # refresh rate constraints will narrow this further later - these are
 # placeholder values for software-layer development.
-DEFAULT_FREQUENCY_POOL = [8.0, 10.0, 12.0, 15.0, 17.0, 20.0]
+#
+# Note: this is the WHOLE SYSTEM's available frequency set, not a per-screen
+# limit. MAX_SIMULTANEOUS_TARGETS below governs how many can flicker at once
+# within a single dynamic group - a separate, smaller constraint. The pool
+# needs to be large enough to cover permanently-reserved CONFIRM (2) and
+# SCROLL (2-4) frequencies from TargetRegistry, with enough left over for
+# dynamic targets to still be useful.
+DEFAULT_FREQUENCY_POOL = [8.0, 10.0, 12.0, 15.0, 17.0, 20.0, 23.0, 26.0, 29.0, 33.0]
 
 
 @dataclass
@@ -152,3 +160,118 @@ def prepare_screen(
         raw_elements = [t.element for t in group.targets]
         group.targets = assign_frequencies(raw_elements, pool)
     return groups
+
+
+# =========================================================================
+# Target Registry (added 2026-08-19, per Grok Note 10/11 priority #3)
+#
+# Extends the above single-screen logic to handle multiple simultaneous
+# CATEGORIES of SSVEP targets that can be on-screen together, each needing
+# its own reserved frequencies so they never collide:
+#   - CONFIRM targets (yes_target/no_target) - used by core/confirm.py,
+#     must always be available with a stable, reserved frequency pair.
+#   - SCROLL targets (scrollbar up/down markers, possibly slow/fast tiers)
+#     - per design_decisions.md, these are "always-visible" alongside
+#       whatever else is on screen, so they need permanently reserved
+#       frequencies distinct from the dynamic grid pool.
+#   - UI_GRID / KEYBOARD targets - the dynamic, per-screen pool from
+#     prepare_screen() above (general UI elements, keyboard letter groups,
+#     prediction bar entries, etc.) - these can reuse the same frequencies
+#     across different screens since they're never on-screen at the same
+#     time as each other, but must never overlap with the reserved
+#     CONFIRM/SCROLL frequencies.
+# =========================================================================
+
+class TargetCategory(Enum):
+    CONFIRM = "confirm"
+    SCROLL = "scroll"
+    DYNAMIC = "dynamic"  # UI grid, keyboard groups, predictions, etc.
+
+
+class TargetRegistry:
+    """
+    Central authority for frequency allocation across all SSVEP target
+    categories, so CONFIRM and SCROLL always have stable reserved
+    frequencies, and DYNAMIC (grid/keyboard) targets only ever draw from
+    what's left over - never colliding with the reserved ones.
+
+    One registry instance should be created per app session (or per
+    device profile) and reused everywhere targets are assigned, rather
+    than each feature picking its own frequencies independently.
+    """
+
+    def __init__(self, full_pool: list[float] = None):
+        self.full_pool = list(full_pool or DEFAULT_FREQUENCY_POOL)
+
+        if len(self.full_pool) < 4:
+            raise ValueError(
+                "TargetRegistry needs at least 4 frequencies: 2 reserved "
+                "for CONFIRM, at least 2 reserved for SCROLL, and "
+                "something left over for DYNAMIC targets."
+            )
+
+        # Reserve the first two frequencies permanently for confirm (yes/no).
+        # These must never change during a session - core/confirm.py's
+        # SSVEP_FALLBACK mode depends on a stable yes_target/no_target
+        # frequency mapping.
+        self.confirm_targets = {
+            "yes_target": self.full_pool[0],
+            "no_target": self.full_pool[1],
+        }
+
+        # Reserve the next two for scroll (up/down). If there's enough room
+        # to also reserve a fast-tier (per the stacked-marker speed design
+        # in design_decisions.md) AND still leave at least
+        # MIN_DYNAMIC_TARGETS free afterward, do so; otherwise fall back to
+        # single-speed scroll markers only. Never silently consume the
+        # entire pool - dynamic targets must always have room.
+        MIN_DYNAMIC_TARGETS = 2
+        remaining = self.full_pool[2:]
+
+        if len(remaining) >= 4 + MIN_DYNAMIC_TARGETS:
+            self.scroll_targets = {
+                "scroll_up_slow": remaining[0],
+                "scroll_down_slow": remaining[1],
+                "scroll_up_fast": remaining[2],
+                "scroll_down_fast": remaining[3],
+            }
+            dynamic_start = 6
+        elif len(remaining) >= 2 + MIN_DYNAMIC_TARGETS:
+            self.scroll_targets = {
+                "scroll_up_slow": remaining[0],
+                "scroll_down_slow": remaining[1],
+            }
+            dynamic_start = 4
+        else:
+            raise ValueError(
+                f"Frequency pool too small: need at least "
+                f"2 (confirm) + 2 (scroll) + {MIN_DYNAMIC_TARGETS} (dynamic) "
+                f"= {4 + MIN_DYNAMIC_TARGETS} frequencies, got {len(self.full_pool)}."
+            )
+
+        self.dynamic_pool = self.full_pool[dynamic_start:]
+
+    def reserved_frequencies(self) -> set[float]:
+        """All frequencies that are permanently claimed and must never be
+        reused by dynamic (grid/keyboard) targets."""
+        return set(self.confirm_targets.values()) | set(self.scroll_targets.values())
+
+    def prepare_dynamic_screen(
+        self,
+        elements: list[UIElement],
+        screen_width: float,
+        screen_height: float,
+    ) -> list[TargetGroup]:
+        """
+        Same as the module-level prepare_screen(), but guaranteed to only
+        use frequencies from this registry's dynamic_pool - never
+        colliding with reserved CONFIRM/SCROLL frequencies. This is what
+        keyboard groups, prediction entries, and general UI grids should
+        call, instead of the raw prepare_screen() function directly.
+        """
+        return prepare_screen(elements, screen_width, screen_height, frequency_pool=self.dynamic_pool)
+
+    def max_dynamic_targets_per_group(self) -> int:
+        """How many simultaneous dynamic targets fit, given reserved frequencies took some of the pool."""
+        return len(self.dynamic_pool)
+
