@@ -17,11 +17,21 @@ input source in place of the real decoder.
 - `tests/` - Proves the pieces work correctly together.
 - `docs/` - Design decisions and rationale, so future sessions (or
   collaborators) don't have to re-derive *why* something was built a certain way.
+- `demo_end_to_end.py` - Wires onboarding → profile → save/load → policy + confirm.
+- `shell_terminal.py` - Interactive terminal shell to dogfood the keyboard and confirm flow.
 
-## Running the tests
+## Quick start
 
-```
-python3 tests/test_policy_with_simulator.py
+```bash
+# Automated spine demo
+python3 demo_end_to_end.py
+
+# Interactive keyboard + confirm (terminal UI shell)
+python3 shell_terminal.py
+
+# Tests
+python3 tests/test_demo_end_to_end.py
+python3 tests/test_text_entry.py
 ```
 
 No dependencies beyond the Python standard library at this stage.
@@ -35,4 +45,4 @@ flow, command policy, future UI - should keep working unchanged. This seam
 is the whole point of the simulator existing.
 
 See `docs/design_decisions.md` for the reasoning behind key choices
-(confirm-before-commit thresholds, accuracy assumptions, etc.).
+(confirm-before-commit thresholds, accuracy assumptions, keyboard layout, etc.).
