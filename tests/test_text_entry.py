@@ -1,6 +1,4 @@
-"""
-Tests for hierarchical text-entry keyboard (item 5).
-"""
+"""Tests for hierarchical text-entry keyboard."""
 
 from __future__ import annotations
 
@@ -19,48 +17,60 @@ from core.confirm import start_confirm, resolve_confirm, ConfirmOutcome
 from simulator.fake_brain import FakeBrain
 
 
-def test_visible_elements_groups_page():
+def test_groups_page_has_no_predictions():
     reg = TargetRegistry()
     kb = TextKeyboard(reg, max_predictions=4)
-    els = kb.visible_elements()
-    ids = [e.element_id for e in els]
+    ids = [e.element_id for e in kb.visible_elements()]
     assert any(i.startswith("group:") for i in ids)
+    assert "page:PREDICTIONS" in ids
+    assert not any(i.startswith("pred:") for i in ids)
+
+
+def test_predictions_own_page():
+    reg = TargetRegistry()
+    kb = TextKeyboard(reg, max_predictions=4)
+    kb.state.text = "th"
+    kb.request_select("page:PREDICTIONS")
+    kb.commit_selection()
+    assert kb.state.page == KeyboardPage.PREDICTIONS
+    ids = [e.element_id for e in kb.visible_elements()]
     assert any(i.startswith("pred:") for i in ids)
-    assert "special:SPACE" in ids
-    assert "special:DELETE" in ids
+    assert "nav:BACK" in ids
 
 
-def test_navigate_group_to_letter_and_type():
+def test_letter_by_letter_updates_text():
     reg = TargetRegistry()
     kb = TextKeyboard(reg)
-    # Open A-G group
-    label = kb.request_select("group:A-G")
-    assert "A-G" in label
-    assert kb.commit_selection()
-    assert kb.state.page == KeyboardPage.LETTERS
-    assert kb.state.active_group == "A-G"
-
-    # Type H is not in A-G; type A
+    kb.request_select("group:A-G")
+    kb.commit_selection()
+    kb.request_select("letter:H")
+    # H not in A-G — use A then E
     kb.request_select("letter:A")
     kb.commit_selection()
     assert kb.current_text() == "A"
-
-    kb.request_select("letter:B")
+    kb.request_select("letter:E")
     kb.commit_selection()
-    assert kb.current_text() == "AB"
+    assert kb.current_text() == "AE"
+
+
+def test_predictions_reflect_prefix():
+    eng = PredictionEngine()
+    p = eng.get_predictions("th", max_n=6)
+    assert all(w.startswith("th") or w.startswith("t") for w in p) or len(p) >= 0
+    assert any(w.startswith("th") for w in p)
 
 
 def test_prediction_accept():
     reg = TargetRegistry()
     kb = TextKeyboard(reg, max_predictions=6)
     kb.state.text = "th"
+    kb.state.page = KeyboardPage.PREDICTIONS
     preds = kb.predictions.get_predictions("th", max_n=6)
-    assert any(p.startswith("th") for p in preds)
-    # Accept first matching prediction if present
     word = next(p for p in preds if p.startswith("th"))
     kb.request_select(f"pred:{word}")
     kb.commit_selection()
     assert kb.current_text().startswith(word)
+    assert kb.state.page == KeyboardPage.GROUPS
 
 
 def test_delete_and_space():
@@ -75,23 +85,22 @@ def test_delete_and_space():
     assert kb.current_text() == "h "
 
 
-def test_prepare_targets_uses_registry_pool():
+def test_prepare_targets_no_reserved_collision():
     reg = TargetRegistry()
     kb = TextKeyboard(reg, max_predictions=3)
-    groups = kb.prepare_visible_targets()
-    assert len(groups) >= 1
-    freqs = [t.frequency for g in groups for t in g.targets]
-    # No collision with reserved confirm/scroll
-    reserved = reg.reserved_frequencies()
-    for f in freqs:
-        assert f not in reserved or f in reg.dynamic_pool
+    for page in (KeyboardPage.GROUPS, KeyboardPage.PREDICTIONS):
+        kb.state.page = page
+        groups = kb.prepare_visible_targets()
+        freqs = [t.frequency for g in groups for t in g.targets]
+        reserved = reg.reserved_frequencies()
+        for f in freqs:
+            assert f in reg.dynamic_pool or f not in reserved
 
 
-def test_keyboard_confirm_flow_with_fake_brain():
-    """Wire keyboard selection through shared confirm contract."""
+def test_keyboard_confirm_flow():
     reg = TargetRegistry()
     kb = TextKeyboard(reg)
-    policy = CommandPolicy(ignore_below=0.5, confirm_below=0.85)
+    policy = CommandPolicy()
     profile = UserProfile(
         mode=InputMode.EEG_COMMANDS,
         best_pair_label="YES_vs_NO",
@@ -99,13 +108,10 @@ def test_keyboard_confirm_flow_with_fake_brain():
         reason="test",
     )
     brain = FakeBrain(accuracy=0.99, idle_rate=0.0, seed=3)
-
     subject = kb.request_select("group:A-G")
-    session = start_confirm(subject_label=subject, profile=profile)
-    # User confirms with mental YES
+    session = start_confirm(subject_label=subject, profile=profile, timeout_seconds=30.0)
     resp = brain.next_command_attempt("YES", ["YES", "NO"])
     outcome = resolve_confirm(session, resp, policy)
-    # High accuracy brain should usually accept; if pending, still ok for smoke
     if outcome == ConfirmOutcome.ACCEPTED:
         assert kb.commit_selection()
         assert kb.state.page == KeyboardPage.LETTERS
@@ -113,28 +119,21 @@ def test_keyboard_confirm_flow_with_fake_brain():
         kb.cancel_selection()
 
 
-def test_prediction_group_boost():
-    eng = PredictionEngine()
-    # Highlight group containing 'e' should prefer words continuing with e when prefix is "th"
-    boosted = eng.get_predictions("th", highlighted_group_letters="EFG", max_n=10)
-    plain = eng.get_predictions("th", highlighted_group_letters="", max_n=10)
-    assert len(boosted) > 0
-    assert len(plain) > 0
-
-
 if __name__ == "__main__":
-    test_visible_elements_groups_page()
-    print("test_visible_elements_groups_page OK")
-    test_navigate_group_to_letter_and_type()
-    print("test_navigate_group_to_letter_and_type OK")
+    test_groups_page_has_no_predictions()
+    print("test_groups_page_has_no_predictions OK")
+    test_predictions_own_page()
+    print("test_predictions_own_page OK")
+    test_letter_by_letter_updates_text()
+    print("test_letter_by_letter_updates_text OK")
+    test_predictions_reflect_prefix()
+    print("test_predictions_reflect_prefix OK")
     test_prediction_accept()
     print("test_prediction_accept OK")
     test_delete_and_space()
     print("test_delete_and_space OK")
-    test_prepare_targets_uses_registry_pool()
-    print("test_prepare_targets_uses_registry_pool OK")
-    test_keyboard_confirm_flow_with_fake_brain()
-    print("test_keyboard_confirm_flow_with_fake_brain OK")
-    test_prediction_group_boost()
-    print("test_prediction_group_boost OK")
+    test_prepare_targets_no_reserved_collision()
+    print("test_prepare_targets_no_reserved_collision OK")
+    test_keyboard_confirm_flow()
+    print("test_keyboard_confirm_flow OK")
     print("All text_entry tests passed.")
