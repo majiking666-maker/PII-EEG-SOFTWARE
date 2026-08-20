@@ -108,6 +108,40 @@ single-tier scroll (no fast tier) rather than starving the dynamic pool,
 and raises a clear error rather than silently misbehaving if the pool is
 too small to support confirm + scroll + at least 2 dynamic targets.
 
+## Hierarchical text-entry keyboard (2026-08-20)
+
+PII owns its own keyboard surface for v1 (does not drive the native OS
+keyboard). Reasons: full control over flicker targets, consistent behavior
+across platforms, clean integration with user mode (EEG vs SSVEP_FALLBACK),
+and the ability to place prediction chips and confirm affordances exactly
+where the design requires.
+
+**Layout**
+- Prediction bar (top): up to 6 suggestions.
+- Groups page: letter groups A-G, H-N, O-U, V-Z plus SPACE / DELETE / DONE
+  and a path to a numbers page.
+- Letters page: letters inside the chosen group + BACK + specials.
+- Numbers page: 0-9 + BACK + specials.
+
+**Hierarchy** exists so simultaneous SSVEP frequencies stay within the
+TargetRegistry dynamic pool after confirm/scroll reservations.
+
+**Predictions**
+- Conditioned on committed text (prefix of the current word).
+- Soft boost when a letter group is highlighted (words whose next character
+  falls in that group rank higher).
+- Simple offline prefix engine in `core/text_entry.py` for development;
+  interface (`PredictionEngine`) is swap-friendly for a real on-device LM later.
+- Accepting a prediction is one confirm (same contract as every other action).
+
+**Selection flow**
+1. User fixates a target (group, letter, prediction, special).
+2. `request_select` returns a subject label for `start_confirm`.
+3. Confirm resolves via mental Yes/No or SSVEP yes/no targets per profile mode.
+4. On ACCEPTED, `commit_selection` mutates keyboard text/page state.
+
+Free-form "think the sentence" is an explicit non-goal for this phase.
+
 ## Why a simulator instead of building against real hardware from day one
 
 No EEG/SSVEP hardware exists yet (hardware acquisition is funding-dependent,
